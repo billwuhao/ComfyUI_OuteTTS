@@ -1,0 +1,7 @@
+git+https://github.com/descriptinc/audiotools@master
+loguru
+tqdm
+mecab-python3
+unidic-lite
+openai-whisper>=20240930
+descript-audio-codec
