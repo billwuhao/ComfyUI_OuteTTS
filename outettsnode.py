@@ -239,14 +239,14 @@ def get_speakers():
     speakers = [f.rsplit(".", 1)[0] for f in os.listdir(speakers_dir) if f.endswith('.json')]
     return speakers
 
+TTS_MODEL = None
+TOKENIZER = None
+DAC_MODEL = None
+WHISPER_MODEL = None
 class OuteTTSRun:
     def __init__(self):
         self.dtype = get_compatible_dtype()
         self.device = device
-        self.tts_model = None
-        self.tokenizer = None
-        self.dac_model = None
-        self.whisper_model = None
 
     @classmethod
     def INPUT_TYPES(s):
@@ -318,12 +318,13 @@ class OuteTTSRun:
         except:
             logger.warning("Flash attention 2 not available. Using default attention implementation.\nFor faster inference on supported hardware, consider installing FlashAttention using:\npip install flash-attn --no-build-isolation")
         
-        if self.tts_model is None or self.tokenizer is None or self.dac_model is None or self.whisper_model is None:
-            self.whisper_model = whisper.load_model(whisper_model_path).to(self.device)
-            self.dac_model = dac.DAC.load(dac_model_path).to(self.device).eval()
-            self.tokenizer = AutoTokenizer.from_pretrained(tts_model_path)
+        global TTS_MODEL, TOKENIZER, DAC_MODEL, WHISPER_MODEL
+        if TTS_MODEL is None or TOKENIZER is None or DAC_MODEL is None or WHISPER_MODEL is None:
+            WHISPER_MODEL = whisper.load_model(whisper_model_path).to(self.device)
+            DAC_MODEL = dac.DAC.load(dac_model_path).to(self.device).eval()
+            TOKENIZER = AutoTokenizer.from_pretrained(tts_model_path)
             
-            self.tts_model = AutoModelForCausalLM.from_pretrained(
+            TTS_MODEL = AutoModelForCausalLM.from_pretrained(
                 tts_model_path,
                 torch_dtype=self.dtype,
                 **config["additional_model_config"]
@@ -334,7 +335,7 @@ class OuteTTSRun:
             with open(file_path, "r", encoding='utf-8') as f:
                 speaker = json.load(f)
         elif audio is not None:
-            self.audio_processor = AudioProcessor(self.device, audio, self.whisper_model, self.dac_model)
+            self.audio_processor = AudioProcessor(self.device, audio, WHISPER_MODEL, DAC_MODEL)
             speaker = self.audio_processor.create_speaker_from_whisper()
             self.save_speaker(speaker, speaker_name.strip())
         genconfig.speaker = speaker
@@ -342,17 +343,17 @@ class OuteTTSRun:
         if not chunked:
             genconfig.generation_type = info.GenerationType.REGULAR
 
-        otts = OuteTTS(self.device, self.tts_model, self.dac_model, self.tokenizer, config, genconfig)
+        otts = OuteTTS(self.device, TTS_MODEL, DAC_MODEL, TOKENIZER, config, genconfig)
         audio_array, sample_rate = otts.generate()
 
         if unload_model:
             otts.clean()
             self.audio_processor.clean()
             self.audio_processor = None
-            self.tts_model = None
-            self.tokenizer = None
-            self.dac_model = None
-            self.whisper_model = None
+            TTS_MODEL = None
+            TOKENIZER = None
+            DAC_MODEL = None
+            WHISPER_MODEL = None
             otts = None
             torch.cuda.empty_cache()
 

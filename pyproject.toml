@@ -1,7 +1,7 @@
 [project]
 name = "qutets-mw"
 description = "OuteTTS - Unified Text-To-Speech. A node for ComfyUI."
-version = "1.0.0"
+version = "1.0.1"
 license = {file = "LICENSE"}
 dependencies = []
 
