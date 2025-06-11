@@ -51,8 +51,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 models_dir = folder_paths.models_dir
 whisper_model_path = os.path.join(models_dir, "TTS", "whisper-large-v3-turbo", "large-v3-turbo.pt")
-tts_model_path = os.path.join(models_dir, "TTS", "Llama-OuteTTS-1.0-1B")
+tts_model_path_v1 = os.path.join(models_dir, "TTS", "Llama-OuteTTS-1.0-1B")
+tts_model_path_v2 = os.path.join(models_dir, "TTS", "OuteTTS-1.0-0.6B")
 dac_model_path = os.path.join(models_dir, "TTS", "DAC.speech.v1.0", "weights_24khz_1.5kbps_v1.0.pth")
+speakers_dir = os.path.join(models_dir, "TTS", "speakers", "Oute_Speakers")
+os.makedirs(speakers_dir, exist_ok=True)
 
 def get_compatible_dtype():
     """
@@ -231,7 +234,6 @@ class OuteTTS:
 
 
 def get_speakers():
-    speakers_dir = os.path.join(tts_model_path, "speakers")
     if not os.path.exists(speakers_dir):
         os.makedirs(speakers_dir, exist_ok=True)
         return []
@@ -247,12 +249,14 @@ class OuteTTSRun:
     def __init__(self):
         self.dtype = get_compatible_dtype()
         self.device = device
+        self.model_version = None
 
     @classmethod
     def INPUT_TYPES(s):
         speakers = get_speakers()
         # default_speaker = speakers[0] if speakers else "None"
         return {"required": {
+                    "model": (["1B","0.6B"], {"default": "0.6B"}),
                     "text": ("STRING",),
                     },
                 "optional": {
@@ -277,7 +281,7 @@ class OuteTTSRun:
 
     def save_speaker(self, speaker: dict, speaker_name):
         speaker['interface_version'] = 3
-        file_path = os.path.join(tts_model_path, "speakers", speaker_name + ".json")
+        file_path = os.path.join(speakers_dir, speaker_name + ".json")
         folder_path = os.path.dirname(file_path)
         if folder_path and not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -285,7 +289,7 @@ class OuteTTSRun:
             json.dump(speaker, f, ensure_ascii=False, indent=2)
         logger.info(f"Speaker saved to: {file_path}")
 
-    def gen(self, text, speaker, 
+    def gen(self, model, text, speaker, 
             # max_new_tokens, 
             audio=None, unload_model=True, save_speaker=True, speaker_name="", chunked=True, seed=0):
         if seed != 0:
@@ -319,11 +323,17 @@ class OuteTTSRun:
             logger.warning("Flash attention 2 not available. Using default attention implementation.\nFor faster inference on supported hardware, consider installing FlashAttention using:\npip install flash-attn --no-build-isolation")
         
         global TTS_MODEL, TOKENIZER, DAC_MODEL, WHISPER_MODEL
-        if TTS_MODEL is None or TOKENIZER is None or DAC_MODEL is None or WHISPER_MODEL is None:
+        if TTS_MODEL is None or TOKENIZER is None or DAC_MODEL is None or WHISPER_MODEL is None or self.model_version != model:
             WHISPER_MODEL = whisper.load_model(whisper_model_path).to(self.device)
             DAC_MODEL = dac.DAC.load(dac_model_path).to(self.device).eval()
+            if model == "1B":
+                tts_model_path = tts_model_path_v1
+                self.model_version = "1B"
+            else:
+                tts_model_path = tts_model_path_v2
+                self.model_version = "0.6B"
+
             TOKENIZER = AutoTokenizer.from_pretrained(tts_model_path)
-            
             TTS_MODEL = AutoModelForCausalLM.from_pretrained(
                 tts_model_path,
                 torch_dtype=self.dtype,
@@ -331,13 +341,16 @@ class OuteTTSRun:
             ).to(self.device)
 
         if speaker is not None:
-            file_path = os.path.join(tts_model_path, "speakers", speaker + ".json")
+            file_path = os.path.join(speakers_dir, speaker + ".json")
             with open(file_path, "r", encoding='utf-8') as f:
                 speaker = json.load(f)
         elif audio is not None:
             self.audio_processor = AudioProcessor(self.device, audio, WHISPER_MODEL, DAC_MODEL)
             speaker = self.audio_processor.create_speaker_from_whisper()
             self.save_speaker(speaker, speaker_name.strip())
+        else:
+            raise ValueError("No speaker or audio provided!")
+
         genconfig.speaker = speaker
 
         if not chunked:
